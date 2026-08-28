@@ -1,4 +1,4 @@
-﻿public enum ProcessResult
+﻿public enum TransactionProcessingOutcome
 {
     Processed,
     Duplicate,

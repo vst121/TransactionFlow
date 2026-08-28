@@ -1,7 +1,7 @@
 <Solution>
   <Folder Name="/Solution Items/">
-    <File Path="DB-Schema.txt" />
     <File Path="docker-compose.yml" />
+    <File Path="init.sql" />
   </Folder>
   <Project Path="TransactionFlow.Application/TransactionFlow.Application.csproj" Id="003ffe54-c175-4e6c-bf55-9db5bb8fe7cb" />
   <Project Path="TransactionFlow.Contracts/TransactionFlow.Contracts.csproj" Id="ca79f2d0-39a5-4f92-88ac-040783dca18d" />

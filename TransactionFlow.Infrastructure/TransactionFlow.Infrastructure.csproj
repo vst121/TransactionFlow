@@ -18,4 +18,8 @@
     <ProjectReference Include="..\TransactionFlow.Domain\TransactionFlow.Domain.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Kafka\" />
+  </ItemGroup>
+
 </Project>

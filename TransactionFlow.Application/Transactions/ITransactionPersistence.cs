@@ -2,7 +2,7 @@
 
 public interface ITransactionPersistence
 {
-    Task<ProcessResult> ProcessAsync(
+    Task<TransactionProcessingOutcome> ProcessAsync(
         Transaction transaction,
         CancellationToken cancellationToken);
 }

@@ -7,7 +7,7 @@ public sealed class PostgresTransactionPersistence(
     NpgsqlDataSource dataSource)
     : ITransactionPersistence
 {
-    public async Task<ProcessResult> ProcessAsync(
+    public async Task<TransactionProcessingOutcome> ProcessAsync(
         Transaction transaction,
         CancellationToken cancellationToken)
     {
@@ -34,7 +34,7 @@ public sealed class PostgresTransactionPersistence(
                 await dbTransaction.CommitAsync(
                     cancellationToken);
 
-                return ProcessResult.Duplicate;
+                return TransactionProcessingOutcome.Duplicate;
             }
 
             // 2. Ignore non-success transactions
@@ -43,7 +43,7 @@ public sealed class PostgresTransactionPersistence(
                 await dbTransaction.CommitAsync(
                     cancellationToken);
 
-                return ProcessResult.Ignored;
+                return TransactionProcessingOutcome.Ignored;
             }
 
             // 3. Aggregate Upsert
@@ -56,7 +56,7 @@ public sealed class PostgresTransactionPersistence(
             await dbTransaction.CommitAsync(
                 cancellationToken);
 
-            return ProcessResult.Processed;
+            return TransactionProcessingOutcome.Processed;
         }
         catch
         {
