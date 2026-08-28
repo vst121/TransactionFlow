@@ -1,4 +1,9 @@
 <Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="DB-Schema.txt" />
+    <File Path="docker-compose.yml" />
+  </Folder>
+  <Project Path="TransactionFlow.Application/TransactionFlow.Application.csproj" Id="003ffe54-c175-4e6c-bf55-9db5bb8fe7cb" />
   <Project Path="TransactionFlow.Contracts/TransactionFlow.Contracts.csproj" Id="ca79f2d0-39a5-4f92-88ac-040783dca18d" />
   <Project Path="TransactionFlow.Domain.Tests/TransactionFlow.Domain.Tests.csproj" Id="85c3decf-a0f3-48fa-8cd1-bd2822db97c2" />
   <Project Path="TransactionFlow.Domain/TransactionFlow.Domain.csproj" Id="1c8bd872-a3d3-4c8b-942c-59e53e7d3fcc" />

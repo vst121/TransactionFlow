@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\TransactionFlow.Application\TransactionFlow.Application.csproj" />
     <ProjectReference Include="..\TransactionFlow.Contracts\TransactionFlow.Contracts.csproj" />
     <ProjectReference Include="..\TransactionFlow.Domain\TransactionFlow.Domain.csproj" />
     <ProjectReference Include="..\TransactionFlow.Infrastructure\TransactionFlow.Infrastructure.csproj" />

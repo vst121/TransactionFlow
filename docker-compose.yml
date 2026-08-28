@@ -1,0 +1,15 @@
+services:
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: transactions
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    ports:
+      - "5432:5432"
+
+  kafka:
+    image: apache/kafka:4.0.0
+    ports:
+      - "9092:9092"
