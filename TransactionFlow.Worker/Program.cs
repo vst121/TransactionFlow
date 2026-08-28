@@ -1,4 +1,8 @@
+using TransactionFlow.Application.Transactions;
+using TransactionFlow.Infrastructure.Persistence;
+using TransactionFlow.Infrastructure.Persistence.Repositories;
 using TransactionFlow.Worker.Kafka;
+using Microsoft.EntityFrameworkCore;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -16,6 +20,22 @@ builder.Services
         !string.IsNullOrWhiteSpace(options.GroupId),
         "Kafka GroupId is required.")
     .ValidateOnStart();
+
+builder.Services.AddDbContext<TransactionFlowDbContext>(
+    options =>
+        options.UseNpgsql(
+            builder.Configuration.GetConnectionString(
+                "TransactionFlow")));
+
+builder.Services.AddScoped<
+    ProcessedTransactionRepository>();
+
+builder.Services.AddScoped<
+    MerchantAggregateRepository>();
+
+builder.Services.AddScoped<
+    ITransactionProcessor,
+    TransactionProcessor>();
 
 builder.Services.AddHostedService<TransactionConsumer>();
 

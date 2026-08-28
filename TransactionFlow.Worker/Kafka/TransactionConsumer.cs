@@ -1,22 +1,23 @@
-﻿using System.Text.Json;
-using Confluent.Kafka;
+﻿using Confluent.Kafka;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
+using TransactionFlow.Application.Transactions;
 using TransactionFlow.Contracts;
 
 namespace TransactionFlow.Worker.Kafka;
 
 public sealed class TransactionConsumer(
     IOptions<KafkaOptions> options,
+    IServiceScopeFactory scopeFactory,
     ILogger<TransactionConsumer> logger)
     : BackgroundService
 {
-    private readonly KafkaOptions _options = options.Value;
-
-    // Cached JsonSerializerOptions to avoid per-message allocations (CA1869).
-    private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
+    private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
+
+    private readonly KafkaOptions _options = options.Value;
 
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
@@ -24,13 +25,11 @@ public sealed class TransactionConsumer(
         var config = new ConsumerConfig
         {
             BootstrapServers = _options.BootstrapServers,
-
             GroupId = _options.GroupId,
 
             AutoOffsetReset = AutoOffsetReset.Earliest,
 
             EnableAutoCommit = false,
-
             EnableAutoOffsetStore = false,
 
             AllowAutoCreateTopics = false
@@ -49,7 +48,7 @@ public sealed class TransactionConsumer(
         consumer.Subscribe(_options.Topic);
 
         logger.LogInformation(
-            "Kafka consumer started. Topic: {Topic}, GroupId: {GroupId}",
+            "Kafka consumer started. Topic={Topic}, GroupId={GroupId}",
             _options.Topic,
             _options.GroupId);
 
@@ -62,57 +61,73 @@ public sealed class TransactionConsumer(
                     var result =
                         consumer.Consume(stoppingToken);
 
+                    TransactionMessage? message;
+
                     try
                     {
-                        var message =
+                        message =
                             JsonSerializer.Deserialize<TransactionMessage>(
                                 result.Message.Value,
-                                _jsonOptions);
-
-                        if (message is null)
-                        {
-                            logger.LogWarning(
-                                "Received null transaction. " +
-                                "Partition={Partition}, Offset={Offset}",
-                                result.Partition,
-                                result.Offset);
-
-                            continue;
-                        }
-
-                        logger.LogInformation(
-                            """
-        Transaction received:
-        Id={TransactionId}
-        Merchant={MerchantId}
-        Amount={Amount}
-        Currency={Currency}
-        Status={Status}
-        Partition={Partition}
-        Offset={Offset}
-        """,
-                            message.TransactionId,
-                            message.MerchantId,
-                            message.Amount,
-                            message.Currency,
-                            message.Status,
-                            result.Partition,
-                            result.Offset);
+                                JsonOptions);
                     }
                     catch (JsonException ex)
                     {
                         logger.LogError(
                             ex,
-                            "Invalid JSON message. Partition={Partition}, Offset={Offset}, Value={Value}",
+                            "Invalid JSON. Partition={Partition}, Offset={Offset}",
                             result.Partition,
-                            result.Offset,
-                            result.Message.Value);
+                            result.Offset);
+
+                        // We intentionally don't commit here.
+                        // DLQ/retry handling will be added later.
+                        continue;
+                    }
+
+                    if (message is null)
+                    {
+                        logger.LogError(
+                            "Message deserialized to null. Partition={Partition}, Offset={Offset}",
+                            result.Partition,
+                            result.Offset);
 
                         continue;
                     }
 
+                    using var scope =
+                        scopeFactory.CreateScope();
+
+                    var processor =
+                        scope.ServiceProvider
+                            .GetRequiredService<ITransactionProcessor>();
+
+                    var processResult =
+                        await processor.ProcessAsync(
+                            message,
+                            stoppingToken);
+
+                    logger.LogInformation(
+                        "Transaction processed. " +
+                        "TransactionId={TransactionId}, " +
+                        "MerchantId={MerchantId}, " +
+                        "Result={Result}, " +
+                        "Partition={Partition}, " +
+                        "Offset={Offset}",
+                        message.TransactionId,
+                        message.MerchantId,
+                        processResult,
+                        result.Partition,
+                        result.Offset);
+
                     // IMPORTANT:
-                    // We do NOT commit the offset yet.
+                    // DB transaction has already committed
+                    // before we commit the Kafka offset.
+                    consumer.Commit(result);
+
+                    logger.LogInformation(
+                        "Kafka offset committed. " +
+                        "Partition={Partition}, Offset={Offset}",
+                        result.Partition,
+                        result.Offset);
                 }
                 catch (ConsumeException ex)
                 {
