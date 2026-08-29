@@ -9,5 +9,6 @@
   <Project Path="TransactionFlow.Domain/TransactionFlow.Domain.csproj" Id="1c8bd872-a3d3-4c8b-942c-59e53e7d3fcc" />
   <Project Path="TransactionFlow.Infrastructure/TransactionFlow.Infrastructure.csproj" Id="525b74a3-de1a-4659-b6df-ee81e8d45183" />
   <Project Path="TransactionFlow.Integration.Tests/TransactionFlow.Integration.Tests.csproj" Id="7d155ac7-c85f-4d05-9793-afdf0dbe7d2d" />
+  <Project Path="TransactionFlow.Producer/TransactionFlow.Producer.csproj" Id="5f7fb5ec-c390-4a96-9742-423a29c30537" />
   <Project Path="TransactionFlow.Worker/TransactionFlow.Worker.csproj" Id="373945e9-57b3-4672-b650-9fa99a3844df" />
 </Solution>
