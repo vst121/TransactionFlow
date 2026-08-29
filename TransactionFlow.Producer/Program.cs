@@ -3,17 +3,36 @@ using Microsoft.Extensions.Hosting;
 using TransactionFlow.Producer.Kafka;
 using TransactionFlow.Producer.Transactions;
 
-var builder = Host.CreateApplicationBuilder(args);
+var builder = Host.CreateApplicationBuilder(
+    new HostApplicationBuilderSettings
+    {
+        Args = args,
+        ContentRootPath = AppContext.BaseDirectory
+    });
 
-Console.WriteLine($"CurrentDirectory: {Directory.GetCurrentDirectory()}");
-Console.WriteLine($"AppContext.BaseDirectory: {AppContext.BaseDirectory}");
-Console.WriteLine(
-    $"Kafka BootstrapServers: " +
-    $"{builder.Configuration["Kafka:BootstrapServers"]}");
-Console.WriteLine(
-    $"Kafka Topic: " +
-    $"{builder.Configuration["Kafka:Topic"]}");
-
+//Console.WriteLine($"CurrentDirectory: {Directory.GetCurrentDirectory()}");
+//Console.WriteLine($"AppContext.BaseDirectory: {AppContext.BaseDirectory}");
+//Console.WriteLine(
+//    $"Kafka BootstrapServers: " +
+//    $"{builder.Configuration["Kafka:BootstrapServers"]}");
+//Console.WriteLine(
+//    $"Kafka Topic: " +
+//    $"{builder.Configuration["Kafka:Topic"]}");
+//Console.WriteLine($"Environment: {builder.Environment.EnvironmentName}");
+//Console.WriteLine($"ContentRoot: {builder.Environment.ContentRootPath}");
+//Console.WriteLine($"BaseDirectory: {AppContext.BaseDirectory}");
+//Console.WriteLine(
+//    $"Kafka BootstrapServers: " +
+//    $"{builder.Configuration["Kafka:BootstrapServers"]}");
+//Console.WriteLine(
+//    $"Kafka Topic: " +
+//    $"{builder.Configuration["Kafka:Topic"]}");
+//Console.WriteLine();
+//Console.WriteLine("Configuration providers:");
+//foreach (var provider in builder.Configuration.Sources)
+//{
+//    Console.WriteLine(provider.GetType().FullName);
+//}
 
 builder.Services
     .AddOptions<KafkaOptions>()
