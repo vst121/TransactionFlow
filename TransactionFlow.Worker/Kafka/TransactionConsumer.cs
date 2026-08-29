@@ -1,5 +1,6 @@
 ﻿using Confluent.Kafka;
 using Microsoft.Extensions.Options;
+using Microsoft.VisualBasic.FileIO;
 using System.Text.Json;
 using TransactionFlow.Application.Transactions;
 using TransactionFlow.Contracts;
@@ -8,6 +9,7 @@ namespace TransactionFlow.Worker.Kafka;
 
 public sealed class TransactionConsumer(
     IOptions<KafkaOptions> options,
+    IOptions<FailureInjectionOptions> failureInjection,    
     IServiceScopeFactory scopeFactory,
     ILogger<TransactionConsumer> logger)
     : BackgroundService
@@ -17,7 +19,10 @@ public sealed class TransactionConsumer(
         PropertyNameCaseInsensitive = true
     };
 
+
     private readonly KafkaOptions _options = options.Value;
+    private readonly FailureInjectionOptions _failureInjection = failureInjection.Value;
+    
 
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
@@ -117,6 +122,16 @@ public sealed class TransactionConsumer(
                         processResult,
                         result.Partition,
                         result.Offset);
+
+                    if (_failureInjection.CrashAfterDatabaseCommit)
+                    {
+                        logger.LogCritical(
+                            "FAILURE INJECTION: crashing after DB commit " +
+                            "before Kafka offset commit.");
+
+                        Environment.FailFast(
+                            "Failure injection: crash after database commit.");
+                    }
 
                     // IMPORTANT:
                     // DB transaction has already committed

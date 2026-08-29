@@ -1,10 +1,15 @@
+using Microsoft.EntityFrameworkCore;
 using TransactionFlow.Application.Transactions;
 using TransactionFlow.Infrastructure.Persistence;
 using TransactionFlow.Infrastructure.Persistence.Repositories;
+using TransactionFlow.Worker;
 using TransactionFlow.Worker.Kafka;
-using Microsoft.EntityFrameworkCore;
 
 var builder = Host.CreateApplicationBuilder(args);
+
+builder.Services
+    .AddOptions<FailureInjectionOptions>()
+    .Bind(builder.Configuration.GetSection("FailureInjection"));
 
 builder.Services
     .AddOptions<KafkaOptions>()
