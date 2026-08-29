@@ -1,6 +1,8 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using TransactionFlow.Producer.Kafka;
+using TransactionFlow.Producer.Load;
 using TransactionFlow.Producer.Transactions;
 
 var builder = Host.CreateApplicationBuilder(
@@ -10,30 +12,7 @@ var builder = Host.CreateApplicationBuilder(
         ContentRootPath = AppContext.BaseDirectory
     });
 
-//Console.WriteLine($"CurrentDirectory: {Directory.GetCurrentDirectory()}");
-//Console.WriteLine($"AppContext.BaseDirectory: {AppContext.BaseDirectory}");
-//Console.WriteLine(
-//    $"Kafka BootstrapServers: " +
-//    $"{builder.Configuration["Kafka:BootstrapServers"]}");
-//Console.WriteLine(
-//    $"Kafka Topic: " +
-//    $"{builder.Configuration["Kafka:Topic"]}");
-//Console.WriteLine($"Environment: {builder.Environment.EnvironmentName}");
-//Console.WriteLine($"ContentRoot: {builder.Environment.ContentRootPath}");
-//Console.WriteLine($"BaseDirectory: {AppContext.BaseDirectory}");
-//Console.WriteLine(
-//    $"Kafka BootstrapServers: " +
-//    $"{builder.Configuration["Kafka:BootstrapServers"]}");
-//Console.WriteLine(
-//    $"Kafka Topic: " +
-//    $"{builder.Configuration["Kafka:Topic"]}");
-//Console.WriteLine();
-//Console.WriteLine("Configuration providers:");
-//foreach (var provider in builder.Configuration.Sources)
-//{
-//    Console.WriteLine(provider.GetType().FullName);
-//}
-
+// Kafka
 builder.Services
     .AddOptions<KafkaOptions>()
     .Bind(builder.Configuration.GetSection(
@@ -50,37 +29,54 @@ builder.Services
         "Topic is required.")
     .ValidateOnStart();
 
+// Load
+builder.Services
+    .AddOptions<LoadOptions>()
+    .Bind(builder.Configuration.GetSection("Load"))
+    .Validate(
+        options => options.Count > 0,
+        "Load Count must be greater than zero.")
+    .Validate(
+        options => options.Rate > 0,
+        "Load Rate must be greater than zero.")
+    .ValidateOnStart();
+
+// Transaction Generation
+builder.Services
+    .AddOptions<TransactionGenerationOptions>()
+    .Bind(builder.Configuration.GetSection(
+        "TransactionGeneration"))
+    .Validate(
+        options => options.MerchantCount > 0,
+        "MerchantCount must be greater than zero.")
+    .Validate(
+        options =>
+            options.SuccessRate is >= 0 and <= 1,
+        "SuccessRate must be between 0 and 1.")
+    .Validate(
+        options =>
+            options.DuplicateRate is >= 0 and <= 1,
+        "DuplicateRate must be between 0 and 1.")
+    .ValidateOnStart();
+
+// Services
+
+//builder.Services.AddSingleton(sp =>
+//    sp.GetRequiredService<
+//        IOptions<TransactionGenerationOptions>>().Value);
+
 builder.Services.AddSingleton<
     ITransactionProducer,
     TransactionProducer>();
 
-builder.Services.AddSingleton<
-    TransactionGenerator>();
+builder.Services.AddSingleton<TransactionGenerator>();
+builder.Services.AddSingleton<TransactionLoadRunner>();
 
 using var host = builder.Build();
 
-var producer =
+var runner =
     host.Services
-        .GetRequiredService<ITransactionProducer>();
+        .GetRequiredService<TransactionLoadRunner>();
 
-var generator =
-    host.Services
-        .GetRequiredService<TransactionGenerator>();
-
-for (var i = 0; i < 10; i++)
-{
-    var transaction = generator.Generate();
-
-    var result =
-        await producer.PublishAsync(
-            transaction,
-            CancellationToken.None);
-
-    Console.WriteLine(
-        $"Transaction={transaction.TransactionId} " +
-        $"Merchant={transaction.MerchantId} " +
-        $"Amount={transaction.Amount} " +
-        $"Status={transaction.Status} " +
-        $"Partition={result.Partition} " +
-        $"Offset={result.Offset}");
-}
+await runner.RunAsync(
+    CancellationToken.None);

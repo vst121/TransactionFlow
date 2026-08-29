@@ -1,19 +1,26 @@
-﻿using TransactionFlow.Contracts;
+﻿using Microsoft.Extensions.Options;
+using TransactionFlow.Contracts;
 
 namespace TransactionFlow.Producer.Transactions;
 
 public sealed class TransactionGenerator
 {
-    private static readonly string[] Merchants =
-    [
-        "M-001",
-        "M-002",
-        "M-003",
-        "M-004",
-        "M-005"
-    ];
+    private readonly TransactionGenerationOptions _options;
+    private readonly string[] _merchants;
 
-    private static readonly string[] Currencies =
+    public TransactionGenerator(
+        IOptions<TransactionGenerationOptions> options)
+    {
+        _options = options.Value;
+    
+        _merchants =
+            Enumerable
+                .Range(1, _options.MerchantCount)
+                .Select(i => $"M-{i:000}")
+                .ToArray();
+    }
+
+    private readonly string[] _currencies =
     [
         "EUR",
         "USD"
@@ -22,15 +29,16 @@ public sealed class TransactionGenerator
     public TransactionMessage Generate()
     {
         var merchant =
-            Merchants[
-                Random.Shared.Next(Merchants.Length)];
+            _merchants[
+                Random.Shared.Next(_merchants.Length)];
 
         var currency =
-            Currencies[
-                Random.Shared.Next(Currencies.Length)];
+            _currencies[
+                Random.Shared.Next(_currencies.Length)];
 
         var status =
-            Random.Shared.NextDouble() < 0.9
+            Random.Shared.NextDouble()
+                < _options.SuccessRate
                 ? "SUCCESS"
                 : "FAILED";
 

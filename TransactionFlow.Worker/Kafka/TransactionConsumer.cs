@@ -1,6 +1,5 @@
 ﻿using Confluent.Kafka;
 using Microsoft.Extensions.Options;
-using Microsoft.VisualBasic.FileIO;
 using System.Text.Json;
 using TransactionFlow.Application.Transactions;
 using TransactionFlow.Contracts;
@@ -22,7 +21,7 @@ public sealed class TransactionConsumer(
 
     private readonly KafkaOptions _options = options.Value;
     private readonly FailureInjectionOptions _failureInjection = failureInjection.Value;
-    
+
 
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
@@ -42,22 +41,6 @@ public sealed class TransactionConsumer(
 
         using var consumer =
             new ConsumerBuilder<string, string>(config)
-                .SetPartitionsAssignedHandler(
-                    (_, partitions) =>
-                    {
-                        logger.LogInformation(
-                            "Partitions assigned: {Partitions}",
-                            string.Join(", ", partitions));
-
-                        return [];
-                    })
-                .SetPartitionsRevokedHandler(
-                    (_, partitions) =>
-                    {
-                        logger.LogInformation(
-                            "Partitions revoked: {Partitions}",
-                            string.Join(", ", partitions));
-                    })
                 .SetErrorHandler((_, error) =>
                 {
                     logger.LogError(
@@ -79,8 +62,24 @@ public sealed class TransactionConsumer(
             {
                 try
                 {
+                    logger.LogInformation(
+                        "Waiting for Kafka message...");
+
                     var result =
                         consumer.Consume(stoppingToken);
+
+                    logger.LogInformation(
+                        "Kafka message received. " +
+                        "Topic={Topic}, " +
+                        "Partition={Partition}, " +
+                        "Offset={Offset}",
+                        result.Topic,
+                        result.Partition,
+                        result.Offset);
+
+                    logger.LogInformation(
+                        "Raw Kafka value: {Value}",
+                        result.Message.Value);
 
                     TransactionMessage? message;
 
@@ -95,19 +94,19 @@ public sealed class TransactionConsumer(
                     {
                         logger.LogError(
                             ex,
-                            "Invalid JSON. Partition={Partition}, Offset={Offset}",
+                            "Invalid JSON. " +
+                            "Partition={Partition}, Offset={Offset}",
                             result.Partition,
                             result.Offset);
 
-                        // We intentionally don't commit here.
-                        // DLQ/retry handling will be added later.
                         continue;
                     }
 
                     if (message is null)
                     {
                         logger.LogError(
-                            "Message deserialized to null. Partition={Partition}, Offset={Offset}",
+                            "Message deserialized to null. " +
+                            "Partition={Partition}, Offset={Offset}",
                             result.Partition,
                             result.Offset);
 
@@ -130,14 +129,10 @@ public sealed class TransactionConsumer(
                         "Transaction processed. " +
                         "TransactionId={TransactionId}, " +
                         "MerchantId={MerchantId}, " +
-                        "Result={Result}, " +
-                        "Partition={Partition}, " +
-                        "Offset={Offset}",
+                        "Result={Result}",
                         message.TransactionId,
                         message.MerchantId,
-                        processResult,
-                        result.Partition,
-                        result.Offset);
+                        processResult);
 
                     if (_failureInjection.CrashAfterDatabaseCommit)
                     {
@@ -149,9 +144,6 @@ public sealed class TransactionConsumer(
                             "Failure injection: crash after database commit.");
                     }
 
-                    // IMPORTANT:
-                    // DB transaction has already committed
-                    // before we commit the Kafka offset.
                     consumer.Commit(result);
 
                     logger.LogInformation(
