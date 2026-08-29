@@ -42,6 +42,22 @@ public sealed class TransactionConsumer(
 
         using var consumer =
             new ConsumerBuilder<string, string>(config)
+                .SetPartitionsAssignedHandler(
+                    (_, partitions) =>
+                    {
+                        logger.LogInformation(
+                            "Partitions assigned: {Partitions}",
+                            string.Join(", ", partitions));
+
+                        return [];
+                    })
+                .SetPartitionsRevokedHandler(
+                    (_, partitions) =>
+                    {
+                        logger.LogInformation(
+                            "Partitions revoked: {Partitions}",
+                            string.Join(", ", partitions));
+                    })
                 .SetErrorHandler((_, error) =>
                 {
                     logger.LogError(
