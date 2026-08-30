@@ -2,9 +2,9 @@
 
 namespace TransactionFlow.Application.Transactions;
 
-public interface ITransactionProcessor
+public interface ISuccessfulTransactionHandler
 {
-    Task<TransactionProcessingOutcome> ProcessAsync(
+    Task<TransactionProcessingOutcome> HandleAsync(
         Transaction transaction,
         CancellationToken cancellationToken);
 }

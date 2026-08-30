@@ -1,53 +1,68 @@
-﻿using System.ComponentModel.DataAnnotations;
-using TransactionFlow.Contracts;
+﻿using TransactionFlow.Contracts.Transactions;
 
 namespace TransactionFlow.Application.Transactions;
 
 public sealed class TransactionValidator
 {
-    public ValidationResult Validate(TransactionMessage message)
+    public ValidationResult Validate(
+        TransactionMessage transaction)
     {
-        if (string.IsNullOrWhiteSpace(message.TransactionId))
+        if (string.IsNullOrWhiteSpace(transaction.TransactionId))
         {
             return ValidationResult.Invalid(
                 "TransactionId is required.");
         }
 
-        if (string.IsNullOrWhiteSpace(message.MerchantId))
+        if (string.IsNullOrWhiteSpace(transaction.MerchantId))
         {
             return ValidationResult.Invalid(
                 "MerchantId is required.");
         }
 
-        if (message.Amount <= 0)
+        if (transaction.Amount <= 0)
         {
             return ValidationResult.Invalid(
                 "Amount must be greater than zero.");
         }
 
-        if (string.IsNullOrWhiteSpace(message.Currency))
+        if (string.IsNullOrWhiteSpace(transaction.Currency))
         {
             return ValidationResult.Invalid(
                 "Currency is required.");
         }
 
-        if (message.Status is not ("SUCCESS" or "FAILED"))
+        if (transaction.Currency.Length != 3)
         {
             return ValidationResult.Invalid(
-                $"Unsupported status: {message.Status}");
+                "Currency must contain exactly 3 characters.");
+        }
+
+        if (string.IsNullOrWhiteSpace(transaction.Status))
+        {
+            return ValidationResult.Invalid(
+                "Status is required.");
+        }
+
+        if (!IsValidStatus(transaction.Status))
+        {
+            return ValidationResult.Invalid(
+                $"Unsupported transaction status: '{transaction.Status}'.");
         }
 
         return ValidationResult.Valid();
     }
-}
 
-public sealed record ValidationResult(
-    bool IsValid,
-    string? Error)
-{
-    public static ValidationResult Valid()
-        => new(true, null);
-
-    public static ValidationResult Invalid(string error)
-        => new(false, error);
+    private static bool IsValidStatus(
+        string status)
+    {
+        return status.Equals(
+                   "SUCCESS",
+                   StringComparison.OrdinalIgnoreCase)
+               || status.Equals(
+                   "FAILED",
+                   StringComparison.OrdinalIgnoreCase)
+               || status.Equals(
+                   "PENDING",
+                   StringComparison.OrdinalIgnoreCase);
+    }
 }

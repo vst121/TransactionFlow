@@ -1,4 +1,4 @@
-﻿namespace TransactionFlow.Contracts;
+﻿namespace TransactionFlow.Contracts.Transactions;
 
 public sealed record TransactionMessage(
     string TransactionId,

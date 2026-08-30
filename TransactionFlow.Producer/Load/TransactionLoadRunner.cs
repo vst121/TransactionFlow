@@ -1,6 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using TransactionFlow.Contracts;
+using TransactionFlow.Contracts.Transactions;
 using TransactionFlow.Producer.Kafka;
 using TransactionFlow.Producer.Transactions;
 

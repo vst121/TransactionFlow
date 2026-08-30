@@ -1,6 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using TransactionFlow.Contracts;
-using TransactionFlow.Infrastructure.Persistence.Entities;
+using TransactionFlow.Contracts.Transactions;
+using TransactionFlow.Domain.Transactions;
 
 namespace TransactionFlow.Infrastructure.Persistence.Repositories;
 
@@ -8,7 +8,7 @@ public sealed class ProcessedTransactionRepository(
     TransactionFlowDbContext db)
 {
     public async Task<bool> TryAddAsync(
-        TransactionMessage transaction,
+        Transaction transaction,
         DateTimeOffset processedAt,
         CancellationToken cancellationToken)
     {

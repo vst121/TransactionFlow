@@ -1,7 +1,7 @@
 ﻿using Confluent.Kafka;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
-using TransactionFlow.Contracts;
+using TransactionFlow.Contracts.Transactions;
 
 namespace TransactionFlow.Producer.Kafka;
 

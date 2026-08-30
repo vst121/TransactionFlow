@@ -1,17 +1,21 @@
-﻿using TransactionFlow.Application.Transactions;
-using TransactionFlow.Contracts;
+﻿using Microsoft.EntityFrameworkCore.Design;
+using Npgsql;
+using Npgsql.EntityFrameworkCore.PostgreSQL;
+using Npgsql.EntityFrameworkCore;
+using TransactionFlow.Application.Transactions;
+using TransactionFlow.Domain.Transactions;
 using TransactionFlow.Infrastructure.Persistence.Repositories;
 
-namespace TransactionFlow.Infrastructure.Persistence;
+namespace TransactionFlow.Infrastructure.Persistence.Transactions;
 
-public sealed class TransactionProcessor(
+public sealed class SuccessfulTransactionHandler(
     TransactionFlowDbContext db,
     ProcessedTransactionRepository processedTransactions,
     MerchantAggregateRepository merchantAggregates)
-    : ITransactionProcessor
+    : ISuccessfulTransactionHandler
 {
-    public async Task<TransactionProcessingOutcome> ProcessAsync(
-        TransactionMessage transaction,
+    public async Task<TransactionProcessingOutcome> HandleAsync(
+        Transaction transaction,
         CancellationToken cancellationToken)
     {
         await using var dbTransaction =
@@ -34,17 +38,13 @@ public sealed class TransactionProcessor(
                 return TransactionProcessingOutcome.Duplicate;
             }
 
-            if (transaction.Status.Equals(
-                    "SUCCESS",
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                await merchantAggregates.UpsertSuccessfulAsync(
-                    transaction.MerchantId,
-                    transaction.Currency,
-                    transaction.Amount,
-                    DateTimeOffset.UtcNow,
-                    cancellationToken);
-            }
+            // Use the existing repository method and pass transaction properties
+            await merchantAggregates.UpsertSuccessfulAsync(
+                transaction.MerchantId,
+                transaction.Currency,
+                transaction.Amount,
+                transaction.Timestamp,
+                cancellationToken);
 
             await dbTransaction.CommitAsync(
                 cancellationToken);

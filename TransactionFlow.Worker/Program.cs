@@ -5,6 +5,7 @@ using TransactionFlow.Application.Common.Errors;
 using TransactionFlow.Application.Transactions;
 using TransactionFlow.Infrastructure.Persistence;
 using TransactionFlow.Infrastructure.Persistence.Repositories;
+using TransactionFlow.Infrastructure.Persistence.Transactions;
 using TransactionFlow.Worker;
 using TransactionFlow.Worker.Kafka;
 
@@ -61,6 +62,10 @@ builder.Services.AddScoped<
     ITransactionProcessor,
     TransactionProcessor>();
 
+builder.Services.AddScoped<
+    ITransactionProcessingService,
+    TransactionProcessingService>();
+
 builder.Services.AddHostedService<TransactionConsumer>();
 
 builder.Services.AddSingleton<IDeadLetterProducer,
@@ -68,6 +73,14 @@ builder.Services.AddSingleton<IDeadLetterProducer,
 
 builder.Services.AddSingleton<TransactionValidator>();
 builder.Services.AddSingleton<IErrorClassifier, ErrorClassifier>();
+builder.Services.AddSingleton<IRetryProducer,
+    KafkaRetryProducer>();
+builder.Services.AddScoped<ITransactionProcessingService,
+    TransactionProcessingService>();
+
+builder.Services.AddScoped<
+    ISuccessfulTransactionHandler,
+    SuccessfulTransactionHandler>();
 
 var host = builder.Build();
 

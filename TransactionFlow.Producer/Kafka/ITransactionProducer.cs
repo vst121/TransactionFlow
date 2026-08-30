@@ -1,5 +1,5 @@
 ﻿using Confluent.Kafka;
-using TransactionFlow.Contracts;
+using TransactionFlow.Contracts.Transactions;
 
 namespace TransactionFlow.Producer.Kafka;
 

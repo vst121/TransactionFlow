@@ -1,5 +1,5 @@
 ﻿using Microsoft.Extensions.Options;
-using TransactionFlow.Contracts;
+using TransactionFlow.Contracts.Transactions;
 
 namespace TransactionFlow.Producer.Transactions;
 

@@ -1,10 +1,10 @@
-﻿using TransactionFlow.Domain.Transactions;
+﻿using TransactionFlow.Contracts.Transactions;
 
 namespace TransactionFlow.Application.Transactions;
 
-public interface ITransactionProcessor
+public interface ITransactionProcessingService
 {
     Task<TransactionProcessingOutcome> ProcessAsync(
-        Transaction transaction,
+        TransactionMessage message,
         CancellationToken cancellationToken);
 }
