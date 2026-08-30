@@ -25,6 +25,13 @@ public sealed class TransactionConsumer(
     };
 
     private readonly KafkaOptions _options = options.Value;
+
+    private long _processedCount;
+    private long _duplicateCount;
+    private long _ignoredCount;
+    private long _lastProcessedCount;
+    private DateTimeOffset _lastMetricsAt = DateTimeOffset.UtcNow;
+
     private readonly FailureInjectionOptions _failureInjection =
         failureInjection.Value;
 
@@ -46,6 +53,26 @@ public sealed class TransactionConsumer(
 
         using var consumer =
             new ConsumerBuilder<string, string>(config)
+                .SetPartitionsAssignedHandler(
+                    (_, partitions) =>
+                    {
+                        logger.LogInformation(
+                            "Partitions assigned: {Partitions}",
+                            string.Join(
+                                ", ",
+                                partitions.Select(p =>
+                                    $"{p.Topic}[{p.Partition}]")));
+                    })
+                .SetPartitionsRevokedHandler(
+                    (_, partitions) =>
+                    {
+                        logger.LogInformation(
+                            "Partitions revoked: {Partitions}",
+                            string.Join(
+                                ", ",
+                                partitions.Select(p =>
+                                    $"{p.Topic}[{p.Partition}]")));
+                    })
                 .SetErrorHandler((_, error) =>
                 {
                     logger.LogError(
@@ -60,6 +87,10 @@ public sealed class TransactionConsumer(
             "Kafka consumer started. Topic={Topic}, GroupId={GroupId}",
             _options.Topic,
             _options.GroupId);
+
+        // Start metrics loop
+        var metricsTask =
+            LogMetricsPeriodicallyAsync(stoppingToken);
 
         try
         {
@@ -210,6 +241,27 @@ public sealed class TransactionConsumer(
                             message.MerchantId,
                             processResult);
 
+                        switch (processResult)
+                        {
+                            case TransactionProcessingOutcome.Processed:
+                                Interlocked.Increment(ref _processedCount);
+                                break;
+
+                            case TransactionProcessingOutcome.Duplicate:
+                                Interlocked.Increment(ref _duplicateCount);
+                                break;
+
+                            case TransactionProcessingOutcome.Ignored:
+                                Interlocked.Increment(ref _ignoredCount);
+                                break;
+
+                            default:
+                                logger.LogWarning(
+                                    "Unknown transaction processing outcome: {Outcome}",
+                                    processResult);
+                                break;
+                        }
+
                         // -------------------------------------------------
                         // 4. Failure injection
                         //
@@ -337,4 +389,71 @@ public sealed class TransactionConsumer(
             consumer.Close();
         }
     }
+
+    private void LogMetrics()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var processed =
+            Interlocked.Read(ref _processedCount);
+
+        var duplicates =
+            Interlocked.Read(ref _duplicateCount);
+
+        var ignored =
+            Interlocked.Read(ref _ignoredCount);
+
+        var elapsed =
+            now - _lastMetricsAt;
+
+        var total =
+            processed +
+            duplicates +
+            ignored;
+
+        var processedSinceLast =
+            processed - _lastProcessedCount;
+
+        var throughput =
+            elapsed.TotalSeconds > 0
+                ? processedSinceLast / elapsed.TotalSeconds
+                : 0;
+
+        logger.LogInformation(
+            "Worker metrics: " +
+            "Total={Total}, " +
+            "Processed={Processed}, " +
+            "Duplicate={Duplicate}, " +
+            "Ignored={Ignored}, " +
+            "Throughput={Throughput:F2} tx/s",
+            total,
+            processed,
+            duplicates,
+            ignored,
+            throughput);
+
+        _lastProcessedCount = processed;
+        _lastMetricsAt = now;
+    }
+
+    private async Task LogMetricsPeriodicallyAsync(
+    CancellationToken cancellationToken)
+    {
+        using var timer =
+            new PeriodicTimer(TimeSpan.FromSeconds(5));
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(
+                       cancellationToken))
+            {
+                LogMetrics();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected during shutdown.
+        }
+    }
 }
+
