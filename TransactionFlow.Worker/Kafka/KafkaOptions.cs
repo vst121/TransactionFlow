@@ -9,4 +9,6 @@ public sealed class KafkaOptions
     public required string Topic { get; init; }
 
     public required string GroupId { get; init; }
+
+    public required string DeadLetterTopic { get; init; }
 }

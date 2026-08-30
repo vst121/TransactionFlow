@@ -10,6 +10,7 @@ public sealed class TransactionConsumer(
     IOptions<KafkaOptions> options,
     IOptions<FailureInjectionOptions> failureInjection,    
     IServiceScopeFactory scopeFactory,
+    IDeadLetterProducer deadLetterProducer,
     ILogger<TransactionConsumer> logger)
     : BackgroundService
 {
@@ -94,7 +95,20 @@ public sealed class TransactionConsumer(
                     {
                         logger.LogError(
                             ex,
-                            "Invalid JSON. " +
+                            "Invalid JSON. Sending message to DLQ. " +
+                            "Partition={Partition}, Offset={Offset}",
+                            result.Partition,
+                            result.Offset);
+
+                        await deadLetterProducer.PublishAsync(
+                            result,
+                            ex,
+                            stoppingToken);
+
+                        consumer.Commit(result);
+
+                        logger.LogInformation(
+                            "Invalid message offset committed after successful DLQ publish. " +
                             "Partition={Partition}, Offset={Offset}",
                             result.Partition,
                             result.Offset);

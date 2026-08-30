@@ -1,4 +1,6 @@
+using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using TransactionFlow.Application.Transactions;
 using TransactionFlow.Infrastructure.Persistence;
 using TransactionFlow.Infrastructure.Persistence.Repositories;
@@ -24,7 +26,23 @@ builder.Services
     .Validate(options =>
         !string.IsNullOrWhiteSpace(options.GroupId),
         "Kafka GroupId is required.")
+    .Validate(options =>
+        !string.IsNullOrWhiteSpace(options.DeadLetterTopic),
+        "Kafka DeadLetterTopic is required.")    
     .ValidateOnStart();
+
+
+builder.Services.AddSingleton<IProducer<string, string>>(sp =>
+{
+    var options = sp.GetRequiredService<IOptions<KafkaOptions>>().Value;
+
+    var config = new ProducerConfig
+    {
+        BootstrapServers = options.BootstrapServers
+    };
+
+    return new ProducerBuilder<string, string>(config).Build();
+});
 
 builder.Services.AddDbContext<TransactionFlowDbContext>(
     options =>
@@ -43,6 +61,9 @@ builder.Services.AddScoped<
     TransactionProcessor>();
 
 builder.Services.AddHostedService<TransactionConsumer>();
+
+builder.Services.AddSingleton<IDeadLetterProducer,
+    KafkaDeadLetterProducer>(); 
 
 var host = builder.Build();
 
