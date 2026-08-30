@@ -1,6 +1,7 @@
 using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using TransactionFlow.Application.Common.Errors;
 using TransactionFlow.Application.Transactions;
 using TransactionFlow.Infrastructure.Persistence;
 using TransactionFlow.Infrastructure.Persistence.Repositories;
@@ -63,7 +64,10 @@ builder.Services.AddScoped<
 builder.Services.AddHostedService<TransactionConsumer>();
 
 builder.Services.AddSingleton<IDeadLetterProducer,
-    KafkaDeadLetterProducer>(); 
+    KafkaDeadLetterProducer>();
+
+builder.Services.AddSingleton<TransactionValidator>();
+builder.Services.AddSingleton<IErrorClassifier, ErrorClassifier>();
 
 var host = builder.Build();
 

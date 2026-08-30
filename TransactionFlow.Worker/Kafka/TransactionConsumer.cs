@@ -8,9 +8,10 @@ namespace TransactionFlow.Worker.Kafka;
 
 public sealed class TransactionConsumer(
     IOptions<KafkaOptions> options,
-    IOptions<FailureInjectionOptions> failureInjection,    
+    IOptions<FailureInjectionOptions> failureInjection,
     IServiceScopeFactory scopeFactory,
     IDeadLetterProducer deadLetterProducer,
+    TransactionValidator validator,
     ILogger<TransactionConsumer> logger)
     : BackgroundService
 {
@@ -94,7 +95,6 @@ public sealed class TransactionConsumer(
                     catch (JsonException ex)
                     {
                         logger.LogError(
-                            ex,
                             "Invalid JSON. Sending message to DLQ. " +
                             "Partition={Partition}, Offset={Offset}",
                             result.Partition,
@@ -120,6 +120,38 @@ public sealed class TransactionConsumer(
                     {
                         logger.LogError(
                             "Message deserialized to null. " +
+                            "Partition={Partition}, Offset={Offset}",
+                            result.Partition,
+                            result.Offset);
+
+                        continue;
+                    }
+
+                    var validation =
+                        validator.Validate(message);
+        
+                    if (!validation.IsValid)
+                    {
+                        logger.LogWarning(
+                            "Invalid transaction. " +
+                            "TransactionId={TransactionId}, " +
+                            "Reason={Reason}",
+                            message.TransactionId,
+                            validation.Error);
+
+                        var exception =
+                            new InvalidTransactionException(
+                                validation.Error!);
+
+                        await deadLetterProducer.PublishAsync(
+                            result,
+                            exception,
+                            stoppingToken);
+
+                        consumer.Commit(result);
+
+                        logger.LogInformation(
+                            "Invalid transaction sent to DLQ and offset committed. " +
                             "Partition={Partition}, Offset={Offset}",
                             result.Partition,
                             result.Offset);
