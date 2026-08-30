@@ -67,6 +67,7 @@ builder.Services.AddScoped<
     TransactionProcessingService>();
 
 builder.Services.AddHostedService<TransactionConsumer>();
+builder.Services.AddHostedService<TransactionRetryConsumer>();
 
 builder.Services.AddSingleton<IDeadLetterProducer,
     KafkaDeadLetterProducer>();

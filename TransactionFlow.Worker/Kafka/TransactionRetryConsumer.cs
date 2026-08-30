@@ -219,6 +219,7 @@ public sealed class TransactionRetryConsumer(
         var errorKind =
             errorClassifier.Classify(exception);
 
+        // Permanent failure -> DLQ immediately
         if (errorKind == ErrorKind.Permanent)
         {
             await deadLetterProducer.PublishAsync(
@@ -229,7 +230,27 @@ public sealed class TransactionRetryConsumer(
             consumer.Commit(result);
 
             logger.LogWarning(
-                "Retry processing permanently failed. " +
+                "Permanent failure. " +
+                "TransactionId={TransactionId}, " +
+                "Attempt={Attempt}. Sent to DLQ.",
+                retryMessage.TransactionId,
+                retryMessage.Attempt);
+
+            return;
+        }
+
+        // We already reached the maximum number of attempts.
+        if (retryMessage.Attempt >= MaxAttempts)
+        {
+            await deadLetterProducer.PublishAsync(
+                result,
+                exception,
+                cancellationToken);
+
+            consumer.Commit(result);
+
+            logger.LogError(
+                "Maximum retry attempts reached. " +
                 "TransactionId={TransactionId}, " +
                 "Attempt={Attempt}. Sent to DLQ.",
                 retryMessage.TransactionId,
@@ -240,25 +261,6 @@ public sealed class TransactionRetryConsumer(
 
         var nextAttempt =
             retryMessage.Attempt + 1;
-
-        if (nextAttempt > MaxAttempts)
-        {
-            await deadLetterProducer.PublishAsync(
-                result,
-                exception,
-                cancellationToken);
-
-            consumer.Commit(result);
-
-            logger.LogWarning(
-                "Retry attempts exhausted. " +
-                "TransactionId={TransactionId}, " +
-                "Attempts={Attempts}. Sent to DLQ.",
-                retryMessage.TransactionId,
-                retryMessage.Attempt);
-
-            return;
-        }
 
         var nextRetryMessage =
             new RetryMessage(
@@ -280,10 +282,9 @@ public sealed class TransactionRetryConsumer(
         consumer.Commit(result);
 
         logger.LogWarning(
-            "Retry processing failed. " +
-            "Message sent for another attempt. " +
+            "Transient failure. " +
             "TransactionId={TransactionId}, " +
-            "Attempt={Attempt}",
+            "Scheduled retry. Attempt={Attempt}",
             retryMessage.TransactionId,
             nextAttempt);
     }
