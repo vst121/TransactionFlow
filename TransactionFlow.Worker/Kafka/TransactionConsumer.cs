@@ -1,10 +1,12 @@
-﻿using System.Text.Json;
-using Confluent.Kafka;
+﻿using Confluent.Kafka;
 using Microsoft.Extensions.Options;
+using System.Diagnostics;
+using System.Text.Json;
 using TransactionFlow.Application.Common.Errors;
 using TransactionFlow.Application.Transactions;
 using TransactionFlow.Contracts.Retry;
 using TransactionFlow.Contracts.Transactions;
+using TransactionFlow.Worker.Metrics;
 
 namespace TransactionFlow.Worker.Kafka;
 
@@ -13,8 +15,8 @@ public sealed class TransactionConsumer(
     IOptions<FailureInjectionOptions> failureInjection,
     IServiceScopeFactory scopeFactory,
     IDeadLetterProducer deadLetterProducer,
-    IErrorClassifier errorClassifier,
     TransactionValidator validator,
+    TransactionProcessingMetrics metrics,
     ILogger<TransactionConsumer> logger)
     : BackgroundService
 {
@@ -24,14 +26,6 @@ public sealed class TransactionConsumer(
     };
 
     private readonly KafkaOptions _options = options.Value;
-
-    private long _processedCount;
-    private long _duplicateCount;
-    private long _ignoredCount;
-    private long _lastProcessedCount;
-    private long _lastTotalCount;
-    private DateTimeOffset _lastMetricsAt = DateTimeOffset.UtcNow;
-    private DateTimeOffset _metricsStartedAt = DateTimeOffset.UtcNow;
 
     private readonly FailureInjectionOptions _failureInjection =
         failureInjection.Value;
@@ -89,9 +83,6 @@ protected override async Task ExecuteAsync(
             _options.Topic,
             _options.GroupId);
 
-        var metricsTask =
-            LogMetricsPeriodicallyAsync(stoppingToken);
-
         try
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -100,6 +91,8 @@ protected override async Task ExecuteAsync(
                 {
                     var result =
                         consumer.Consume(stoppingToken);
+
+                    metrics.IncrementConsumed();
 
                     logger.LogDebug(
                         "Kafka message received. " +
@@ -239,50 +232,64 @@ protected override async Task ExecuteAsync(
 
                     TransactionProcessingOutcome processingOutcome;
 
+                    var processingStopwatch =
+                        Stopwatch.StartNew();
+
                     try
                     {
-                        processingOutcome =
-                            await processingService.ProcessAsync(
-                                message,
+                        try
+                        {
+                            processingOutcome =
+                                await processingService.ProcessAsync(
+                                    message,
+                                    stoppingToken);
+                        }
+                        catch (Exception ex)
+                        {
+                            // TransactionProcessingService has already
+                            // performed its local retry attempts.
+                            // At this point the processing has definitively
+                            // failed and the message must go to the DLQ.
+
+                            logger.LogError(
+                                ex,
+                                "Transaction processing failed after retry attempts. " +
+                                "TransactionId={TransactionId}, " +
+                                "Partition={Partition}, " +
+                                "Offset={Offset}",
+                                message.TransactionId,
+                                result.Partition,
+                                result.Offset);
+
+                            await deadLetterProducer.PublishAsync(
+                                result,
+                                ex,
                                 stoppingToken);
+
+                            CommitOffset(
+                                consumer,
+                                result);
+
+                            logger.LogWarning(
+                                "Transaction sent to DLQ and offset committed. " +
+                                "TransactionId={TransactionId}, " +
+                                "Partition={Partition}, " +
+                                "Offset={Offset}",
+                                message.TransactionId,
+                                result.Partition,
+                                result.Offset);
+
+                            continue;
+                        }
                     }
-                    catch (Exception ex)
+                    finally
                     {
-                        // TransactionProcessingService has already
-                        // performed its local retry attempts.
-                        // At this point the processing has definitively
-                        // failed and the message must go to the DLQ.
+                        processingStopwatch.Stop();
 
-                        logger.LogError(
-                            ex,
-                            "Transaction processing failed after retry attempts. " +
-                            "TransactionId={TransactionId}, " +
-                            "Partition={Partition}, " +
-                            "Offset={Offset}",
-                            message.TransactionId,
-                            result.Partition,
-                            result.Offset);
-
-                        await deadLetterProducer.PublishAsync(
-                            result,
-                            ex,
-                            stoppingToken);
-
-                        CommitOffset(
-                            consumer,
-                            result);
-                        
-                        logger.LogWarning(
-                            "Transaction sent to DLQ and offset committed. " +
-                            "TransactionId={TransactionId}, " +
-                            "Partition={Partition}, " +
-                            "Offset={Offset}",
-                            message.TransactionId,
-                            result.Partition,
-                            result.Offset);
-
-                        continue;
+                        metrics.RecordProcessingDuration(
+                            processingStopwatch.Elapsed);
                     }
+
 
                     // -------------------------------------------------
                     // 4. Update metrics
@@ -291,18 +298,15 @@ protected override async Task ExecuteAsync(
                     switch (processingOutcome)
                     {
                         case TransactionProcessingOutcome.Processed:
-                            Interlocked.Increment(
-                                ref _processedCount);
+                            metrics.IncrementProcessed();
                             break;
 
                         case TransactionProcessingOutcome.Duplicate:
-                            Interlocked.Increment(
-                                ref _duplicateCount);
+                            metrics.IncrementDuplicate();
                             break;
 
                         case TransactionProcessingOutcome.Ignored:
-                            Interlocked.Increment(
-                                ref _ignoredCount);
+                            metrics.IncrementIgnored();
                             break;
 
                         default:
@@ -376,98 +380,6 @@ protected override async Task ExecuteAsync(
         finally
         {
             consumer.Close();
-
-            try
-            {
-                await metricsTask;
-            }
-            catch (OperationCanceledException)
-            {
-                // Expected during graceful shutdown.
-            }
-        }
-    }
-
-    private void LogMetrics()
-    {
-        var now = DateTimeOffset.UtcNow;
-
-        var processed =
-            Interlocked.Read(ref _processedCount);
-
-        var duplicates =
-            Interlocked.Read(ref _duplicateCount);
-
-        var ignored =
-            Interlocked.Read(ref _ignoredCount);
-
-        var total =
-            processed +
-            duplicates +
-            ignored;
-
-        // No new messages since the last metrics snapshot.
-        if (total == _lastTotalCount)
-        {
-            return;
-        }
-
-        var interval =
-            now - _lastMetricsAt;
-
-        var processedSinceLast =
-            processed - _lastProcessedCount;
-
-        var currentThroughput =
-            interval.TotalSeconds > 0
-                ? processedSinceLast / interval.TotalSeconds
-                : 0;
-
-        var totalElapsed =
-            now - _metricsStartedAt;
-
-        var averageThroughput =
-            totalElapsed.TotalSeconds > 0
-                ? total / totalElapsed.TotalSeconds
-                : 0;
-
-        logger.LogInformation(
-            "Worker metrics: " +
-            "Total={Total}, " +
-            "Processed={Processed}, " +
-            "Duplicate={Duplicate}, " +
-            "Ignored={Ignored}, " +
-            "CurrentThroughput={CurrentThroughput:F2} tx/s, " +
-            "AverageThroughput={AverageThroughput:F2} tx/s",
-            total,
-            processed,
-            duplicates,
-            ignored,
-            currentThroughput,
-            averageThroughput);
-
-        _lastTotalCount = total;
-        _lastProcessedCount = processed;
-        _lastMetricsAt = now;
-    }
-
-    private async Task LogMetricsPeriodicallyAsync(
-    CancellationToken cancellationToken)
-    {
-        using var timer =
-            new PeriodicTimer(TimeSpan.FromSeconds(5));
-
-        try
-        {
-            while (await timer.WaitForNextTickAsync(
-                       cancellationToken))
-            {
-                LogMetrics();
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Expected during shutdown.
         }
     }
 

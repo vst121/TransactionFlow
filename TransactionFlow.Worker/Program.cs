@@ -8,6 +8,7 @@ using TransactionFlow.Infrastructure.Persistence.Repositories;
 using TransactionFlow.Infrastructure.Persistence.Transactions;
 using TransactionFlow.Worker;
 using TransactionFlow.Worker.Kafka;
+using TransactionFlow.Worker.Metrics;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -79,6 +80,13 @@ builder.Services.AddScoped<ITransactionProcessingService,
 builder.Services.AddScoped<
     ISuccessfulTransactionHandler,
     SuccessfulTransactionHandler>();
+
+builder.Services.AddSingleton<TransactionProcessingMetrics>();
+
+builder.Services.AddSingleton<TransactionProcessingMetricsReporter>();
+
+builder.Services.AddHostedService<
+    TransactionProcessingMetricsReporterService>();
 
 var host = builder.Build();
 

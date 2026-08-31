@@ -1,17 +1,16 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using Npgsql;
-using TransactionFlow.Infrastructure.Persistence.Entities;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
+using TransactionFlow.Domain.Transactions;
 
 namespace TransactionFlow.Infrastructure.Persistence.Repositories;
 
 public sealed class MerchantAggregateRepository(
-    TransactionFlowDbContext db)
+    TransactionFlowDbContext db,
+    ILogger<MerchantAggregateRepository> logger)
 {
-    public async Task UpsertSuccessfulAsync(
-        string merchantId,
-        string currency,
-        decimal amount,
-        DateTimeOffset updatedAt,
+    public async Task UpsertAsync(
+        Transaction transaction,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -29,7 +28,7 @@ public sealed class MerchantAggregateRepository(
                 {1},
                 1,
                 {2},
-                {3}
+                NOW()
             )
             ON CONFLICT (merchant_id, currency)
             DO UPDATE SET
@@ -40,12 +39,31 @@ public sealed class MerchantAggregateRepository(
                     merchant_aggregates.successful_transaction_amount
                     + EXCLUDED.successful_transaction_amount,
 
-                updated_at = EXCLUDED.updated_at;
+                updated_at = NOW();
             """;
+
+        var stopwatch = Stopwatch.StartNew();
 
         await db.Database.ExecuteSqlRawAsync(
             sql,
-            new object[] { merchantId, currency, amount, updatedAt },
+            [
+                transaction.MerchantId,
+                transaction.Currency,
+                transaction.Amount
+            ],
             cancellationToken);
+
+        stopwatch.Stop();
+
+        logger.LogDebug(
+            "Merchant aggregate upsert completed. " +
+            "TransactionId={TransactionId}, " +
+            "MerchantId={MerchantId}, " +
+            "Currency={Currency}, " +
+            "DurationMs={DurationMs:F2}",
+            transaction.TransactionId,
+            transaction.MerchantId,
+            transaction.Currency,
+            stopwatch.Elapsed.TotalMilliseconds);
     }
 }

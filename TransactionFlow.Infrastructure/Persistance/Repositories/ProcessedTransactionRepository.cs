@@ -1,11 +1,13 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using TransactionFlow.Contracts.Transactions;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 using TransactionFlow.Domain.Transactions;
 
 namespace TransactionFlow.Infrastructure.Persistence.Repositories;
 
 public sealed class ProcessedTransactionRepository(
-    TransactionFlowDbContext db)
+    TransactionFlowDbContext db,
+    ILogger<ProcessedTransactionRepository> logger)
 {
     public async Task<bool> TryAddAsync(
         Transaction transaction,
@@ -37,6 +39,8 @@ public sealed class ProcessedTransactionRepository(
             DO NOTHING;
             """;
 
+        var stopwatch = Stopwatch.StartNew();
+
         var affectedRows =
             await db.Database.ExecuteSqlRawAsync(
                 sql,
@@ -50,6 +54,17 @@ public sealed class ProcessedTransactionRepository(
                     processedAt
                 ],
                 cancellationToken);
+
+        stopwatch.Stop();
+
+        logger.LogDebug(
+            "Deduplication query completed. " +
+            "TransactionId={TransactionId}, " +
+            "Inserted={Inserted}, " +
+            "DurationMs={DurationMs:F2}",
+            transaction.TransactionId,
+            affectedRows == 1,
+            stopwatch.Elapsed.TotalMilliseconds);
 
         return affectedRows == 1;
     }
