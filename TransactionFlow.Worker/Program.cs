@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using TransactionFlow.Application.Common.Errors;
 using TransactionFlow.Application.Transactions;
+using TransactionFlow.Infrastructure.Diagnostics;
 using TransactionFlow.Infrastructure.Persistence;
 using TransactionFlow.Infrastructure.Persistence.Repositories;
 using TransactionFlow.Infrastructure.Persistence.Transactions;
@@ -88,6 +89,24 @@ builder.Services.AddSingleton<TransactionProcessingMetricsReporter>();
 builder.Services.AddHostedService<
     TransactionProcessingMetricsReporterService>();
 
-var host = builder.Build();
+//var host = builder.Build();
 
-await host.RunAsync();
+//await host.RunAsync();
+
+builder.Services.AddScoped<
+    DatabaseCommitLatencyProbe>();
+
+using var host = builder.Build();
+
+using var scope =
+    host.Services.CreateScope();
+
+var probe =
+    scope.ServiceProvider
+        .GetRequiredService<
+            DatabaseCommitLatencyProbe>();
+
+await probe.RunAsync(
+    CancellationToken.None);
+
+return;
