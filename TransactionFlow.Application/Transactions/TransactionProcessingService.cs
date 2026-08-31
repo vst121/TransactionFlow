@@ -7,6 +7,8 @@ public sealed class TransactionProcessingService(
     ITransactionProcessor processor)
     : ITransactionProcessingService
 {
+    private const int MaxAttempts = 3;
+
     public async Task<TransactionProcessingOutcome> ProcessAsync(
         TransactionMessage message,
         CancellationToken cancellationToken)
@@ -20,9 +22,36 @@ public sealed class TransactionProcessingService(
                 status: ParseStatus(message.Status),
                 timestamp: message.Timestamp);
 
-        return await processor.ProcessAsync(
-            transaction,
-            cancellationToken);
+        for (var attempt = 1; attempt <= MaxAttempts; attempt++)
+        {
+            try
+            {
+                return await processor.ProcessAsync(
+                    transaction,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                if (!IsTransient(ex))
+                {
+                    throw;
+                }
+
+                if (attempt == MaxAttempts)
+                {
+                    throw;
+                }
+            }
+        }
+
+        throw new InvalidOperationException(
+            "Transaction processing failed unexpectedly.");
+    }
+
+    private static bool IsTransient(
+        Exception exception)
+    {
+        return exception is TimeoutException;
     }
 
     private static TransactionStatus ParseStatus(

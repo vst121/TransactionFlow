@@ -13,7 +13,6 @@ public sealed class TransactionConsumer(
     IOptions<FailureInjectionOptions> failureInjection,
     IServiceScopeFactory scopeFactory,
     IDeadLetterProducer deadLetterProducer,
-    IRetryProducer retryProducer,
     IErrorClassifier errorClassifier,
     TransactionValidator validator,
     ILogger<TransactionConsumer> logger)
@@ -35,8 +34,8 @@ public sealed class TransactionConsumer(
     private readonly FailureInjectionOptions _failureInjection =
         failureInjection.Value;
 
-    protected override async Task ExecuteAsync(
-        CancellationToken stoppingToken)
+protected override async Task ExecuteAsync(
+    CancellationToken stoppingToken)
     {
         var config = new ConsumerConfig
         {
@@ -88,7 +87,6 @@ public sealed class TransactionConsumer(
             _options.Topic,
             _options.GroupId);
 
-        // Start metrics loop
         var metricsTask =
             LogMetricsPeriodicallyAsync(stoppingToken);
 
@@ -98,13 +96,10 @@ public sealed class TransactionConsumer(
             {
                 try
                 {
-                    logger.LogDebug(
-                        "Waiting for Kafka message...");
-
                     var result =
                         consumer.Consume(stoppingToken);
 
-                    logger.LogInformation(
+                    logger.LogDebug(
                         "Kafka message received. " +
                         "Topic={Topic}, " +
                         "Partition={Partition}, " +
@@ -112,10 +107,6 @@ public sealed class TransactionConsumer(
                         result.Topic,
                         result.Partition,
                         result.Offset);
-
-                    logger.LogDebug(
-                        "Raw Kafka value: {Value}",
-                        result.Message.Value);
 
                     // -------------------------------------------------
                     // 1. Deserialize
@@ -125,6 +116,13 @@ public sealed class TransactionConsumer(
 
                     try
                     {
+                        if (string.IsNullOrWhiteSpace(
+                                result.Message.Value))
+                        {
+                            throw new JsonException(
+                                "Kafka message payload is empty.");
+                        }
+
                         message =
                             JsonSerializer.Deserialize<TransactionMessage>(
                                 result.Message.Value,
@@ -133,7 +131,9 @@ public sealed class TransactionConsumer(
                     catch (JsonException ex)
                     {
                         logger.LogError(
-                            "Invalid JSON. Sending message to DLQ. " +
+                            ex,
+                            "Invalid transaction JSON. " +
+                            "Sending message to DLQ. " +
                             "Partition={Partition}, Offset={Offset}",
                             result.Partition,
                             result.Offset);
@@ -160,19 +160,18 @@ public sealed class TransactionConsumer(
                             new InvalidTransactionException(
                                 "Message deserialized to null.");
 
-                        logger.LogWarning(
-                            "Message deserialized to null. " +
-                            "Sending to DLQ. " +
-                            "Partition={Partition}, Offset={Offset}",
-                            result.Partition,
-                            result.Offset);
-
                         await deadLetterProducer.PublishAsync(
                             result,
                             exception,
                             stoppingToken);
 
                         consumer.Commit(result);
+
+                        logger.LogWarning(
+                            "Null transaction sent to DLQ. " +
+                            "Partition={Partition}, Offset={Offset}",
+                            result.Partition,
+                            result.Offset);
 
                         continue;
                     }
@@ -193,7 +192,8 @@ public sealed class TransactionConsumer(
                         logger.LogWarning(
                             "Invalid transaction. " +
                             "TransactionId={TransactionId}, " +
-                            "Reason={Reason}",
+                            "Reason={Reason}. " +
+                            "Sending to DLQ.",
                             message.TransactionId,
                             validation.Error);
 
@@ -207,7 +207,10 @@ public sealed class TransactionConsumer(
                         logger.LogInformation(
                             "Invalid transaction sent to DLQ " +
                             "and offset committed. " +
-                            "Partition={Partition}, Offset={Offset}",
+                            "TransactionId={TransactionId}, " +
+                            "Partition={Partition}, " +
+                            "Offset={Offset}",
+                            message.TransactionId,
                             result.Partition,
                             result.Offset);
 
@@ -215,7 +218,7 @@ public sealed class TransactionConsumer(
                     }
 
                     // -------------------------------------------------
-                    // 3. Business processing
+                    // 3. Application processing
                     // -------------------------------------------------
 
                     using var scope =
@@ -223,133 +226,34 @@ public sealed class TransactionConsumer(
 
                     var processingService =
                         scope.ServiceProvider
-                            .GetRequiredService<ITransactionProcessingService>();
+                            .GetRequiredService<
+                                ITransactionProcessingService>();
+
+                    TransactionProcessingOutcome processingOutcome;
 
                     try
                     {
-                        var processResult =
+                        processingOutcome =
                             await processingService.ProcessAsync(
                                 message,
                                 stoppingToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        // TransactionProcessingService has already
+                        // performed its local retry attempts.
+                        // At this point the processing has definitively
+                        // failed and the message must go to the DLQ.
 
-                        logger.LogInformation(
-                            "Transaction processed. " +
-                            "TransactionId={TransactionId}, " +
-                            "MerchantId={MerchantId}, " +
-                            "Result={Result}",
-                            message.TransactionId,
-                            message.MerchantId,
-                            processResult);
-
-                        switch (processResult)
-                        {
-                            case TransactionProcessingOutcome.Processed:
-                                Interlocked.Increment(ref _processedCount);
-                                break;
-
-                            case TransactionProcessingOutcome.Duplicate:
-                                Interlocked.Increment(ref _duplicateCount);
-                                break;
-
-                            case TransactionProcessingOutcome.Ignored:
-                                Interlocked.Increment(ref _ignoredCount);
-                                break;
-
-                            default:
-                                logger.LogWarning(
-                                    "Unknown transaction processing outcome: {Outcome}",
-                                    processResult);
-                                break;
-                        }
-
-                        // -------------------------------------------------
-                        // 4. Failure injection
-                        //
-                        // DB transaction has already committed.
-                        // Kafka offset has NOT been committed yet.
-                        // -------------------------------------------------
-
-                        if (_failureInjection.CrashAfterDatabaseCommit)
-                        {
-                            logger.LogCritical(
-                                "FAILURE INJECTION: crashing after DB commit " +
-                                "before Kafka offset commit.");
-
-                            Environment.FailFast(
-                                "Failure injection: crash after database commit.");
-                        }
-
-                        // -------------------------------------------------
-                        // 5. Commit Kafka offset
-                        // -------------------------------------------------
-
-                        consumer.Commit(result);
-
-                        logger.LogInformation(
-                            "Kafka offset committed. " +
+                        logger.LogError(
+                            ex,
+                            "Transaction processing failed after retry attempts. " +
                             "TransactionId={TransactionId}, " +
                             "Partition={Partition}, " +
                             "Offset={Offset}",
                             message.TransactionId,
                             result.Partition,
                             result.Offset);
-                    }
-                    catch (Exception ex)
-                    {
-                        var errorKind =
-                            errorClassifier.Classify(ex);
-
-                        logger.LogError(
-                            ex,
-                            "Transaction processing failed. " +
-                            "TransactionId={TransactionId}, " +
-                            "ErrorKind={ErrorKind}",
-                            message.TransactionId,
-                            errorKind);
-
-                        // -------------------------------------------------
-                        // 6. Transient failure → Retry
-                        // -------------------------------------------------
-
-                        if (errorKind == ErrorKind.Transient)
-                        {
-                            var retryMessage =
-                                new RetryMessage(
-                                    OriginalTopic: result.Topic,
-                                    OriginalPartition: result.Partition.Value,
-                                    OriginalOffset: result.Offset.Value,
-                                    TransactionId: message.TransactionId,
-                                    Attempt: 1,
-                                    ErrorType: ex.GetType().Name,
-                                    ErrorMessage: ex.Message,
-                                    Payload: result.Message.Value,
-                                    FailedAt: DateTimeOffset.UtcNow);
-
-                            await retryProducer.PublishAsync(
-                                result.Message.Key,
-                                retryMessage,
-                                stoppingToken);
-
-                            consumer.Commit(result);
-
-                            logger.LogWarning(
-                                "Transient failure sent to retry topic " +
-                                "and original offset committed. " +
-                                "TransactionId={TransactionId}, " +
-                                "Partition={Partition}, " +
-                                "Offset={Offset}, " +
-                                "Attempt={Attempt}",
-                                message.TransactionId,
-                                result.Partition,
-                                result.Offset,
-                                retryMessage.Attempt);
-
-                            continue;
-                        }
-
-                        // -------------------------------------------------
-                        // 7. Permanent failure → DLQ
-                        // -------------------------------------------------
 
                         await deadLetterProducer.PublishAsync(
                             result,
@@ -359,8 +263,7 @@ public sealed class TransactionConsumer(
                         consumer.Commit(result);
 
                         logger.LogWarning(
-                            "Permanent failure sent to DLQ " +
-                            "and original offset committed. " +
+                            "Transaction sent to DLQ and offset committed. " +
                             "TransactionId={TransactionId}, " +
                             "Partition={Partition}, " +
                             "Offset={Offset}",
@@ -370,12 +273,86 @@ public sealed class TransactionConsumer(
 
                         continue;
                     }
+
+                    // -------------------------------------------------
+                    // 4. Update metrics
+                    // -------------------------------------------------
+
+                    switch (processingOutcome)
+                    {
+                        case TransactionProcessingOutcome.Processed:
+                            Interlocked.Increment(
+                                ref _processedCount);
+                            break;
+
+                        case TransactionProcessingOutcome.Duplicate:
+                            Interlocked.Increment(
+                                ref _duplicateCount);
+                            break;
+
+                        case TransactionProcessingOutcome.Ignored:
+                            Interlocked.Increment(
+                                ref _ignoredCount);
+                            break;
+
+                        default:
+                            logger.LogWarning(
+                                "Unknown transaction processing outcome: {Outcome}",
+                                processingOutcome);
+                            break;
+                    }
+
+                    logger.LogInformation(
+                        "Transaction processed. " +
+                        "TransactionId={TransactionId}, " +
+                        "MerchantId={MerchantId}, " +
+                        "Outcome={Outcome}, " +
+                        "Partition={Partition}, " +
+                        "Offset={Offset}",
+                        message.TransactionId,
+                        message.MerchantId,
+                        processingOutcome,
+                        result.Partition,
+                        result.Offset);
+
+                    // -------------------------------------------------
+                    // 5. Failure injection
+                    //
+                    // Database transaction has already committed.
+                    // Kafka offset has NOT been committed yet.
+                    // -------------------------------------------------
+
+                    if (_failureInjection.CrashAfterDatabaseCommit)
+                    {
+                        logger.LogCritical(
+                            "FAILURE INJECTION: crashing after DB commit " +
+                            "before Kafka offset commit.");
+
+                        Environment.FailFast(
+                            "Failure injection: crash after database commit.");
+                    }
+
+                    // -------------------------------------------------
+                    // 6. Commit Kafka offset
+                    // -------------------------------------------------
+
+                    consumer.Commit(result);
+
+                    logger.LogDebug(
+                        "Kafka offset committed. " +
+                        "TransactionId={TransactionId}, " +
+                        "Partition={Partition}, " +
+                        "Offset={Offset}",
+                        message.TransactionId,
+                        result.Partition,
+                        result.Offset);
                 }
                 catch (ConsumeException ex)
                 {
                     logger.LogError(
                         ex,
-                        "Kafka consume failed: {Reason}",
+                        "Kafka consume failed. " +
+                        "Reason={Reason}",
                         ex.Error.Reason);
                 }
             }
@@ -387,6 +364,15 @@ public sealed class TransactionConsumer(
         finally
         {
             consumer.Close();
+
+            try
+            {
+                await metricsTask;
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected during graceful shutdown.
+            }
         }
     }
 

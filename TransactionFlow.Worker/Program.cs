@@ -67,15 +67,12 @@ builder.Services.AddScoped<
     TransactionProcessingService>();
 
 builder.Services.AddHostedService<TransactionConsumer>();
-builder.Services.AddHostedService<TransactionRetryConsumer>();
 
 builder.Services.AddSingleton<IDeadLetterProducer,
     KafkaDeadLetterProducer>();
 
 builder.Services.AddSingleton<TransactionValidator>();
 builder.Services.AddSingleton<IErrorClassifier, ErrorClassifier>();
-builder.Services.AddSingleton<IRetryProducer,
-    KafkaRetryProducer>();
 builder.Services.AddScoped<ITransactionProcessingService,
     TransactionProcessingService>();
 
