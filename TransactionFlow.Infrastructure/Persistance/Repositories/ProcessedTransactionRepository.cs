@@ -39,6 +39,10 @@ public sealed class ProcessedTransactionRepository(
             DO NOTHING;
             """;
 
+        await db.Database.ExecuteSqlRawAsync(
+            $"SET synchronous_commit = off;",
+            cancellationToken);
+
         var stopwatch = Stopwatch.StartNew();
 
         var affectedRows =

@@ -89,24 +89,25 @@ builder.Services.AddSingleton<TransactionProcessingMetricsReporter>();
 builder.Services.AddHostedService<
     TransactionProcessingMetricsReporterService>();
 
-//var host = builder.Build();
+var host = builder.Build();
 
-//await host.RunAsync();
+await host.RunAsync();
 
-builder.Services.AddScoped<
-    DatabaseCommitLatencyProbe>();
+//// For test of LatencyProbe
+//builder.Services.AddScoped<
+//    DatabaseCommitLatencyProbe>();
 
-using var host = builder.Build();
+//using var host = builder.Build();
 
-using var scope =
-    host.Services.CreateScope();
+//using var scope =
+//    host.Services.CreateScope();
 
-var probe =
-    scope.ServiceProvider
-        .GetRequiredService<
-            DatabaseCommitLatencyProbe>();
+//var probe =
+//    scope.ServiceProvider
+//        .GetRequiredService<
+//            DatabaseCommitLatencyProbe>();
 
-await probe.RunAsync(
-    CancellationToken.None);
+//await probe.RunAsync(
+//    CancellationToken.None);
 
-return;
+//return;

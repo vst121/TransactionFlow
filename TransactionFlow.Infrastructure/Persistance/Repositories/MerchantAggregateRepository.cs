@@ -42,6 +42,10 @@ public sealed class MerchantAggregateRepository(
                 updated_at = NOW();
             """;
 
+        await db.Database.ExecuteSqlRawAsync(
+            $"SET synchronous_commit = off;",
+            cancellationToken);
+
         var stopwatch = Stopwatch.StartNew();
 
         await db.Database.ExecuteSqlRawAsync(
