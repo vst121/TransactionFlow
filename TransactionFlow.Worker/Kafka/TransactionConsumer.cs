@@ -29,7 +29,9 @@ public sealed class TransactionConsumer(
     private long _duplicateCount;
     private long _ignoredCount;
     private long _lastProcessedCount;
+    private long _lastTotalCount;
     private DateTimeOffset _lastMetricsAt = DateTimeOffset.UtcNow;
+    private DateTimeOffset _metricsStartedAt = DateTimeOffset.UtcNow;
 
     private readonly FailureInjectionOptions _failureInjection =
         failureInjection.Value;
@@ -143,7 +145,9 @@ protected override async Task ExecuteAsync(
                             ex,
                             stoppingToken);
 
-                        consumer.Commit(result);
+                        CommitOffset(
+                            consumer,
+                            result);
 
                         logger.LogWarning(
                             "Invalid JSON sent to DLQ and offset committed. " +
@@ -165,7 +169,9 @@ protected override async Task ExecuteAsync(
                             exception,
                             stoppingToken);
 
-                        consumer.Commit(result);
+                        CommitOffset(
+                            consumer,
+                            result);
 
                         logger.LogWarning(
                             "Null transaction sent to DLQ. " +
@@ -202,7 +208,9 @@ protected override async Task ExecuteAsync(
                             exception,
                             stoppingToken);
 
-                        consumer.Commit(result);
+                        CommitOffset(
+                            consumer,
+                            result);
 
                         logger.LogInformation(
                             "Invalid transaction sent to DLQ " +
@@ -260,8 +268,10 @@ protected override async Task ExecuteAsync(
                             ex,
                             stoppingToken);
 
-                        consumer.Commit(result);
-
+                        CommitOffset(
+                            consumer,
+                            result);
+                        
                         logger.LogWarning(
                             "Transaction sent to DLQ and offset committed. " +
                             "TransactionId={TransactionId}, " +
@@ -336,7 +346,9 @@ protected override async Task ExecuteAsync(
                     // 6. Commit Kafka offset
                     // -------------------------------------------------
 
-                    consumer.Commit(result);
+                    CommitOffset(
+                        consumer,
+                        result);
 
                     logger.LogDebug(
                         "Kafka offset committed. " +
@@ -389,20 +401,34 @@ protected override async Task ExecuteAsync(
         var ignored =
             Interlocked.Read(ref _ignoredCount);
 
-        var elapsed =
-            now - _lastMetricsAt;
-
         var total =
             processed +
             duplicates +
             ignored;
 
+        // No new messages since the last metrics snapshot.
+        if (total == _lastTotalCount)
+        {
+            return;
+        }
+
+        var interval =
+            now - _lastMetricsAt;
+
         var processedSinceLast =
             processed - _lastProcessedCount;
 
-        var throughput =
-            elapsed.TotalSeconds > 0
-                ? processedSinceLast / elapsed.TotalSeconds
+        var currentThroughput =
+            interval.TotalSeconds > 0
+                ? processedSinceLast / interval.TotalSeconds
+                : 0;
+
+        var totalElapsed =
+            now - _metricsStartedAt;
+
+        var averageThroughput =
+            totalElapsed.TotalSeconds > 0
+                ? total / totalElapsed.TotalSeconds
                 : 0;
 
         logger.LogInformation(
@@ -411,13 +437,16 @@ protected override async Task ExecuteAsync(
             "Processed={Processed}, " +
             "Duplicate={Duplicate}, " +
             "Ignored={Ignored}, " +
-            "Throughput={Throughput:F2} tx/s",
+            "CurrentThroughput={CurrentThroughput:F2} tx/s, " +
+            "AverageThroughput={AverageThroughput:F2} tx/s",
             total,
             processed,
             duplicates,
             ignored,
-            throughput);
+            currentThroughput,
+            averageThroughput);
 
+        _lastTotalCount = total;
         _lastProcessedCount = processed;
         _lastMetricsAt = now;
     }
@@ -439,6 +468,39 @@ protected override async Task ExecuteAsync(
         catch (OperationCanceledException)
         {
             // Expected during shutdown.
+        }
+    }
+
+    private void CommitOffset(
+    IConsumer<string, string> consumer,
+    ConsumeResult<string, string> result)
+    {
+        try
+        {
+            consumer.Commit(result);
+
+            logger.LogDebug(
+                "Kafka offset committed. " +
+                "Topic={Topic}, " +
+                "Partition={Partition}, " +
+                "Offset={Offset}",
+                result.Topic,
+                result.Partition,
+                result.Offset);
+        }
+        catch (KafkaException ex)
+        {
+            logger.LogError(
+                ex,
+                "Failed to commit Kafka offset. " +
+                "Topic={Topic}, " +
+                "Partition={Partition}, " +
+                "Offset={Offset}",
+                result.Topic,
+                result.Partition,
+                result.Offset);
+
+            throw;
         }
     }
 }
