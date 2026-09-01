@@ -1,4 +1,5 @@
-﻿using TransactionFlow.Domain.Transactions;
+﻿using TransactionFlow.Application.Outbox;
+using TransactionFlow.Domain.Transactions;
 
 namespace TransactionFlow.Application.Transactions;
 

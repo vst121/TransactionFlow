@@ -2,14 +2,17 @@ using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using TransactionFlow.Application.Common.Errors;
+using TransactionFlow.Application.Outbox;
 using TransactionFlow.Application.Transactions;
 using TransactionFlow.Infrastructure.Diagnostics;
 using TransactionFlow.Infrastructure.Persistence;
+using TransactionFlow.Infrastructure.Persistence.Outbox;
 using TransactionFlow.Infrastructure.Persistence.Repositories;
 using TransactionFlow.Infrastructure.Persistence.Transactions;
 using TransactionFlow.Worker;
 using TransactionFlow.Worker.Kafka;
 using TransactionFlow.Worker.Metrics;
+using TransactionFlow.Worker.Outbox;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -88,6 +91,12 @@ builder.Services.AddSingleton<TransactionProcessingMetricsReporter>();
 
 builder.Services.AddHostedService<
     TransactionProcessingMetricsReporterService>();
+
+builder.Services.AddScoped<OutboxMessageRepository>();
+
+builder.Services.AddScoped<IOutboxStore, OutboxStore>();
+
+builder.Services.AddHostedService<OutboxDispatcher>();
 
 var host = builder.Build();
 

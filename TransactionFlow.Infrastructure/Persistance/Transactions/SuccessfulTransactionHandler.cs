@@ -2,7 +2,9 @@
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using TransactionFlow.Application.Transactions;
+using TransactionFlow.Contracts.Events;
 using TransactionFlow.Domain.Transactions;
+using TransactionFlow.Infrastructure.Persistence.Outbox;
 using TransactionFlow.Infrastructure.Persistence.Repositories;
 
 namespace TransactionFlow.Infrastructure.Persistence.Transactions;
@@ -11,6 +13,7 @@ public sealed class SuccessfulTransactionHandler(
     TransactionFlowDbContext db,
     ProcessedTransactionRepository processedTransactions,
     MerchantAggregateRepository merchantAggregates,
+    OutboxMessageRepository outboxMessages,
     ILogger<SuccessfulTransactionHandler> logger)
     : ISuccessfulTransactionHandler
 {
@@ -57,6 +60,18 @@ public sealed class SuccessfulTransactionHandler(
 
             aggregateStopwatch.Stop();
 
+            var transactionEvent =
+                new TransactionProcessedEvent(
+                    EventId: Guid.NewGuid().ToString(),
+                    TransactionId: transaction.TransactionId,
+                    MerchantId: transaction.MerchantId,
+                    Amount: transaction.Amount,
+                    Currency: transaction.Currency,
+                    OccurredAt: DateTimeOffset.UtcNow);
+            await outboxMessages.AddAsync(
+                transactionEvent,
+                cancellationToken);
+
             var commitStopwatch = Stopwatch.StartNew();
 
             await dbTransaction.CommitAsync(
@@ -65,6 +80,7 @@ public sealed class SuccessfulTransactionHandler(
             commitStopwatch.Stop();
 
             totalStopwatch.Stop();
+
 
             logger.LogDebug(
                 "Successful transaction database operation completed. " +
