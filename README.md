@@ -54,14 +54,14 @@ TransactionFlow.slnx
 
 ### Project responsibilities at a glance
 
-| Project | Responsibility |
-| --- | --- |
-| `Domain` | `Transaction` aggregate invariants, `MerchantAggregate`, `TransactionStatus`, domain exceptions. No dependencies. |
-| `Application` | `TransactionValidator`, `TransactionProcessor`, `TransactionProcessingService` (retry policy, error classification, transient detection). |
-| `Contracts` | Wire-format DTOs shared by Producer and Worker (`TransactionMessage`, retry envelope, DLQ envelope, `TransactionProcessedEvent`). |
-| `Infrastructure` | `TransactionFlowDbContext` (Npgsql/EF Core), repositories, `OutboxStore`, migrations, `DatabaseCommitLatencyProbe`, DI composition root. |
-| `Producer` | Hosted console app that synthesizes transactions and pushes to Kafka. |
-| `Worker` | Hosted console app with two background services: `TransactionConsumer` and `OutboxDispatcher`. Adds OpenTelemetry metrics/tracing. |
+| Project          | Responsibility                                                                                                                            |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `Domain`         | `Transaction` aggregate invariants, `MerchantAggregate`, `TransactionStatus`, domain exceptions. No dependencies.                         |
+| `Application`    | `TransactionValidator`, `TransactionProcessor`, `TransactionProcessingService` (retry policy, error classification, transient detection). |
+| `Contracts`      | Wire-format DTOs shared by Producer and Worker (`TransactionMessage`, retry envelope, DLQ envelope, `TransactionProcessedEvent`).         |
+| `Infrastructure` | `TransactionFlowDbContext` (Npgsql/EF Core), repositories, `OutboxStore`, migrations, `DatabaseCommitLatencyProbe`, DI composition root.  |
+| `Producer`       | Hosted console app that synthesizes transactions and pushes to Kafka.                                                                     |
+| `Worker`         | Hosted console app with two background services: `TransactionConsumer` and `OutboxDispatcher`. Adds OpenTelemetry metrics/tracing.        |
 
 ---
 
@@ -123,18 +123,22 @@ Both hosted apps read `appsettings.json` with overrides via `appsettings.Develop
 
 ```json
 {
-  "Kafka":               { "BootstrapServers": "localhost:9092", "Topic": "transactions" },
-  "Load":                { "Count": 10000, "Rate": 1000, "Concurrency": 32 },
-  "TransactionGeneration": { "MerchantCount": 10, "SuccessRate": 0.90, "DuplicateRate": 0.00 }
+  "Kafka": { "BootstrapServers": "localhost:9092", "Topic": "transactions" },
+  "Load": { "Count": 10000, "Rate": 1000, "Concurrency": 32 },
+  "TransactionGeneration": {
+    "MerchantCount": 10,
+    "SuccessRate": 0.9,
+    "DuplicateRate": 0.0
+  }
 }
 ```
 
-| Setting | Meaning |
-| --- | --- |
-| `Load.Count` | Total messages to send before the host exits. |
-| `Load.Rate` | Target messages per second. |
-| `Load.Concurrency` | Producer flush degree. |
-| `TransactionGeneration.SuccessRate` | Fraction of generated transactions with `Status = Success`. |
+| Setting                               | Meaning                                                            |
+| ------------------------------------- | ------------------------------------------------------------------ |
+| `Load.Count`                          | Total messages to send before the host exits.                      |
+| `Load.Rate`                           | Target messages per second.                                        |
+| `Load.Concurrency`                    | Producer flush degree.                                             |
+| `TransactionGeneration.SuccessRate`   | Fraction of generated transactions with `Status = Success`.        |
 | `TransactionGeneration.DuplicateRate` | Fraction of messages emitted twice (used to exercise idempotency). |
 
 ### Worker (`TransactionFlow.Worker/appsettings.json`)
@@ -144,8 +148,12 @@ Both hosted apps read `appsettings.json` with overrides via `appsettings.Develop
   "ConnectionStrings": {
     "TransactionFlow": "Host=localhost;Port=5432;Database=transactionflow;Username=transactionflow;Password=transactionflow"
   },
-  "Kafka": { "BootstrapServers": "localhost:9092", "Topic": "transactions",
-             "GroupId": "transactionflow-worker", "DeadLetterTopic": "transactions.dlq" },
+  "Kafka": {
+    "BootstrapServers": "localhost:9092",
+    "Topic": "transactions",
+    "GroupId": "transactionflow-worker",
+    "DeadLetterTopic": "transactions.dlq"
+  },
   "FailureInjection": { "CrashAfterDatabaseCommit": false }
 }
 ```
@@ -186,7 +194,7 @@ dotnet test TransactionFlow.Integration.Tests/TransactionFlow.Integration.Tests.
 
 - **Run a single project:** `dotnet run --project TransactionFlow.Worker` (or `.Producer`).
 - **Reset state:** `docker compose down -v` will drop both `postgres_data` and `kafka_data` volumes so you start clean.
-- **Change the schema:** edit `init.sql` *and* add an EF Core migration under `TransactionFlow.Infrastructure/Migrations/`; keep them in sync.
+- **Change the schema:** edit `init.sql` _and_ add an EF Core migration under `TransactionFlow.Infrastructure/Migrations/`; keep them in sync.
 - **Tune retry policy:** `TransactionProcessingService` has a `MaxAttempts` constant and an `IsTransient` predicate — extend `IsTransient` to plug in your real classifier (network blips, EF deadlock exceptions, etc.).
 - **Extend the outbox:** the dispatcher batches up to 100 messages every 500 ms (`OutboxDispatcher.ExecuteAsync`). Adjust the `Take(100)` and `Task.Delay` for your throughput target.
 
