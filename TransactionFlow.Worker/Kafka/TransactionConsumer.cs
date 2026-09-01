@@ -1,12 +1,16 @@
 ﻿using Confluent.Kafka;
 using Microsoft.Extensions.Options;
+using OpenTelemetry.Trace;
 using System.Diagnostics;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using TransactionFlow.Application.Common.Errors;
 using TransactionFlow.Application.Transactions;
 using TransactionFlow.Contracts.Retry;
 using TransactionFlow.Contracts.Transactions;
-using TransactionFlow.Worker.Metrics;
+using TransactionFlow.Worker.Telemetry;
+using TransactionFlow.Worker.Telemetry;
 
 namespace TransactionFlow.Worker.Kafka;
 
@@ -16,7 +20,6 @@ public sealed class TransactionConsumer(
     IServiceScopeFactory scopeFactory,
     IDeadLetterProducer deadLetterProducer,
     TransactionValidator validator,
-    TransactionProcessingMetrics metrics,
     ILogger<TransactionConsumer> logger)
     : BackgroundService
 {
@@ -30,8 +33,8 @@ public sealed class TransactionConsumer(
     private readonly FailureInjectionOptions _failureInjection =
         failureInjection.Value;
 
-protected override async Task ExecuteAsync(
-    CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(
+        CancellationToken stoppingToken)
     {
         var config = new ConsumerConfig
         {
@@ -92,8 +95,6 @@ protected override async Task ExecuteAsync(
                     var result =
                         consumer.Consume(stoppingToken);
 
-                    metrics.IncrementConsumed();
-
                     logger.LogDebug(
                         "Kafka message received. " +
                         "Topic={Topic}, " +
@@ -102,6 +103,16 @@ protected override async Task ExecuteAsync(
                         result.Topic,
                         result.Partition,
                         result.Offset);
+
+                    var tags = new TagList
+                    {
+                        { "kafka.topic", result.Topic },
+                        { "kafka.partition", result.Partition.Value }
+                    };
+
+                    TransactionFlowTelemetry.ConsumedMessages.Add(
+                        1,
+                        tags);
 
                     // -------------------------------------------------
                     // 1. Deserialize
@@ -138,6 +149,8 @@ protected override async Task ExecuteAsync(
                             ex,
                             stoppingToken);
 
+                        TransactionFlowTelemetry.DeadLetteredMessages.Add(1);
+
                         CommitOffset(
                             consumer,
                             result);
@@ -161,6 +174,8 @@ protected override async Task ExecuteAsync(
                             result,
                             exception,
                             stoppingToken);
+
+                        TransactionFlowTelemetry.DeadLetteredMessages.Add(1);
 
                         CommitOffset(
                             consumer,
@@ -201,6 +216,8 @@ protected override async Task ExecuteAsync(
                             exception,
                             stoppingToken);
 
+                        TransactionFlowTelemetry.DeadLetteredMessages.Add(1);
+
                         CommitOffset(
                             consumer,
                             result);
@@ -227,69 +244,105 @@ protected override async Task ExecuteAsync(
 
                     var processingService =
                         scope.ServiceProvider
-                            .GetRequiredService<
-                                ITransactionProcessingService>();
+                            .GetRequiredService<ITransactionProcessingService>();
+
+                    using var activity =
+                        TransactionFlowTelemetry.ActivitySource.StartActivity(
+                            "transaction.process",
+                            ActivityKind.Consumer);
+
+                    activity?.SetTag(
+                        "transaction.id",
+                        message.TransactionId);
+
+                    activity?.SetTag(
+                        "transaction.merchant_id",
+                        message.MerchantId);
+
+                    activity?.SetTag(
+                        "transaction.amount",
+                        (double)message.Amount);
+
+                    activity?.SetTag(
+                        "transaction.currency",
+                        message.Currency);
+
+                    activity?.SetTag(
+                        "kafka.topic",
+                        result.Topic);
+
+                    activity?.SetTag(
+                        "kafka.partition",
+                        result.Partition.Value);
+
+                    activity?.SetTag(
+                        "kafka.offset",
+                        result.Offset.Value);
 
                     TransactionProcessingOutcome processingOutcome;
 
-                    var processingStopwatch =
+                    var stopwatch =
                         Stopwatch.StartNew();
 
                     try
                     {
-                        try
-                        {
-                            processingOutcome =
-                                await processingService.ProcessAsync(
-                                    message,
-                                    stoppingToken);
-                        }
-                        catch (Exception ex)
-                        {
-                            // TransactionProcessingService has already
-                            // performed its local retry attempts.
-                            // At this point the processing has definitively
-                            // failed and the message must go to the DLQ.
-
-                            logger.LogError(
-                                ex,
-                                "Transaction processing failed after retry attempts. " +
-                                "TransactionId={TransactionId}, " +
-                                "Partition={Partition}, " +
-                                "Offset={Offset}",
-                                message.TransactionId,
-                                result.Partition,
-                                result.Offset);
-
-                            await deadLetterProducer.PublishAsync(
-                                result,
-                                ex,
+                        processingOutcome =
+                            await processingService.ProcessAsync(
+                                message,
                                 stoppingToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        // TransactionProcessingService has already
+                        // performed its local retry attempts.
+                        // At this point the processing has definitively
+                        // failed and the message must go to the DLQ.
 
-                            CommitOffset(
-                                consumer,
-                                result);
+                        logger.LogError(
+                            ex,
+                            "Transaction processing failed after retry attempts. " +
+                            "TransactionId={TransactionId}, " +
+                            "Partition={Partition}, " +
+                            "Offset={Offset}",
+                            message.TransactionId,
+                            result.Partition,
+                            result.Offset);
 
-                            logger.LogWarning(
-                                "Transaction sent to DLQ and offset committed. " +
-                                "TransactionId={TransactionId}, " +
-                                "Partition={Partition}, " +
-                                "Offset={Offset}",
-                                message.TransactionId,
-                                result.Partition,
-                                result.Offset);
+                        activity?.SetStatus(
+                            ActivityStatusCode.Error,
+                            ex.Message);
 
-                            continue;
-                        }
+                        activity?.RecordException(ex);
+
+                        await deadLetterProducer.PublishAsync(
+                            result,
+                            ex,
+                            stoppingToken);
+
+                        TransactionFlowTelemetry.DeadLetteredMessages.Add(1);
+
+                        CommitOffset(
+                            consumer,
+                            result);
+
+                        logger.LogWarning(
+                            "Transaction sent to DLQ and offset committed. " +
+                            "TransactionId={TransactionId}, " +
+                            "Partition={Partition}, " +
+                            "Offset={Offset}",
+                            message.TransactionId,
+                            result.Partition,
+                            result.Offset);
+
+                        continue;
                     }
                     finally
                     {
-                        processingStopwatch.Stop();
+                        stopwatch.Stop();
 
-                        metrics.RecordProcessingDuration(
-                            processingStopwatch.Elapsed);
+                        TransactionFlowTelemetry.ProcessingDuration.Record(
+                            stopwatch.Elapsed.TotalMilliseconds);
                     }
-
 
                     // -------------------------------------------------
                     // 4. Update metrics
@@ -298,15 +351,15 @@ protected override async Task ExecuteAsync(
                     switch (processingOutcome)
                     {
                         case TransactionProcessingOutcome.Processed:
-                            metrics.IncrementProcessed();
+                            TransactionFlowTelemetry.ProcessedTransactions.Add(1);
                             break;
 
                         case TransactionProcessingOutcome.Duplicate:
-                            metrics.IncrementDuplicate();
+                            TransactionFlowTelemetry.DuplicateTransactions.Add(1);
                             break;
 
                         case TransactionProcessingOutcome.Ignored:
-                            metrics.IncrementIgnored();
+                            TransactionFlowTelemetry.IgnoredTransactions.Add(1);
                             break;
 
                         default:
@@ -315,6 +368,13 @@ protected override async Task ExecuteAsync(
                                 processingOutcome);
                             break;
                     }
+
+                    activity?.SetTag(
+                        "transaction.outcome",
+                        processingOutcome.ToString());
+
+                    activity?.SetStatus(
+                        ActivityStatusCode.Ok);
 
                     logger.LogInformation(
                         "Transaction processed. " +

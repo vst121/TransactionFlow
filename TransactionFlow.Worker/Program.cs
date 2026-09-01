@@ -11,8 +11,11 @@ using TransactionFlow.Infrastructure.Persistence.Repositories;
 using TransactionFlow.Infrastructure.Persistence.Transactions;
 using TransactionFlow.Worker;
 using TransactionFlow.Worker.Kafka;
-using TransactionFlow.Worker.Metrics;
 using TransactionFlow.Worker.Outbox;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using TransactionFlow.Worker.Telemetry;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -85,18 +88,31 @@ builder.Services.AddScoped<
     ISuccessfulTransactionHandler,
     SuccessfulTransactionHandler>();
 
-builder.Services.AddSingleton<TransactionProcessingMetrics>();
-
-builder.Services.AddSingleton<TransactionProcessingMetricsReporter>();
-
-builder.Services.AddHostedService<
-    TransactionProcessingMetricsReporterService>();
-
 builder.Services.AddScoped<OutboxMessageRepository>();
 
 builder.Services.AddScoped<IOutboxStore, OutboxStore>();
 
 builder.Services.AddHostedService<OutboxDispatcher>();
+
+builder.Services
+    .AddOpenTelemetry()
+    .ConfigureResource(resource =>
+    {
+        resource.AddService(
+            serviceName: TransactionFlowTelemetry.ServiceName);
+    })
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .AddMeter(TransactionFlowTelemetry.ServiceName)
+            .AddConsoleExporter();
+    })
+    .WithTracing(tracing =>
+    {
+        tracing
+            .AddSource(TransactionFlowTelemetry.ServiceName)
+            .AddConsoleExporter();
+    });
 
 var host = builder.Build();
 
